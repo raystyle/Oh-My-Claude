@@ -10,7 +10,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("check", "download", "install", "update", "uninstall", "setup")]
+    [ValidateSet("check", "download", "install", "update", "uninstall", "setup", "hack")]
     [string]$Command = "check",
 
     [switch]$Force
@@ -1160,6 +1160,694 @@ function Invoke-ClaudeUninstall {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
+# hack — GUI Plugin Marketplace Manager
+# ═══════════════════════════════════════════════════════════════════════════
+
+function Get-ClaudeCliPath {
+    <#
+    .SYNOPSIS
+        Resolve the path to claude.exe.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    if (Test-Path $TargetExe) { return $TargetExe }
+
+    $found = Get-Command claude.exe -ErrorAction SilentlyContinue
+    if ($found) { return $found.Source }
+}
+
+function Invoke-ClaudePluginCmd {
+    <#
+    .SYNOPSIS
+        Run a claude plugin subcommand and return parsed JSON output.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSObject])]
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$Arguments
+    )
+
+    $claudeExe = Get-ClaudeCliPath
+    if (-not $claudeExe) {
+        throw "claude.exe not found — run 'omc install claude' first"
+    }
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $output = & $claudeExe @Arguments 2>$null | Out-String
+    $ErrorActionPreference = $prevEAP
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] claude exited with code $LASTEXITCODE" -ForegroundColor Yellow
+    }
+
+    $output = $output.Trim()
+    if (-not $output) { return }
+
+    $jsonStart = -1
+    foreach ($c in '[{') {
+        $idx = $output.IndexOf($c)
+        if ($idx -ge 0 -and ($jsonStart -lt 0 -or $idx -lt $jsonStart)) {
+            $jsonStart = $idx
+        }
+    }
+    if ($jsonStart -lt 0) { return }
+    if ($jsonStart -gt 0) { $output = $output.Substring($jsonStart) }
+    if (-not $output) { return }
+
+    try {
+        return $output | ConvertFrom-Json
+    } catch {
+        Write-Host "[WARN] Could not parse JSON: $_" -ForegroundColor Yellow
+    }
+}
+
+function Get-MarketplaceList {
+    <#
+    .SYNOPSIS
+        Get registered marketplaces from the filesystem.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSObject[]])]
+    param()
+
+    $mpDir = Join-Path $env:USERPROFILE '.claude\plugins\marketplaces'
+    $mps = @()
+
+    if (-not (Test-Path $mpDir)) { return $mps }
+
+    foreach ($dir in (Get-ChildItem -Path $mpDir -Directory -ErrorAction SilentlyContinue)) {
+        $manifestPath = Join-Path $dir.FullName '.claude-plugin\marketplace.json'
+        if (-not (Test-Path $manifestPath)) { continue }
+
+        try {
+            $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $repo = ""
+            if ($manifest.repository -match 'github\.com/([^/]+/[^/"]+)') {
+                $repo = $Matches[1]
+            }
+            $mps += [PSCustomObject]@{
+                name            = $manifest.name
+                source          = "github"
+                repo            = $repo
+                installLocation = $dir.FullName
+            }
+        } catch {}
+    }
+
+    return $mps
+}
+
+function Get-AvailablePlugins {
+    <#
+    .SYNOPSIS
+        Get all available plugins from marketplace manifests, check installed/enabled from JSON files.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSObject[]])]
+    param()
+
+    $claudeDir = Join-Path $env:USERPROFILE '.claude'
+    $mpDir = Join-Path $claudeDir 'plugins\marketplaces'
+    $plugins = @()
+
+    if (-not (Test-Path $mpDir)) { return $plugins }
+
+    $installedIds = @{}
+    $installedPath = Join-Path $claudeDir 'plugins\installed_plugins.json'
+    if (Test-Path $installedPath) {
+        try {
+            $instJson = Get-Content $installedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($instJson.plugins) {
+                $instJson.plugins.PSObject.Properties | ForEach-Object {
+                    $installedIds[$_.Name] = $true
+                }
+            }
+        } catch {}
+    }
+
+    $enabledMap = @{}
+    $settingsPath = Join-Path $claudeDir 'settings.json'
+    if (Test-Path $settingsPath) {
+        try {
+            $settings = Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($settings.enabledPlugins) {
+                $settings.enabledPlugins.PSObject.Properties | ForEach-Object {
+                    $enabledMap[$_.Name] = [bool]$_.Value
+                }
+            }
+        } catch {}
+    }
+
+    foreach ($dir in (Get-ChildItem -Path $mpDir -Directory -ErrorAction SilentlyContinue)) {
+        $manifestPath = Join-Path $dir.FullName '.claude-plugin\marketplace.json'
+        if (-not (Test-Path $manifestPath)) { continue }
+
+        try {
+            $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $mpName = $manifest.name
+            if (-not $manifest.plugins) { continue }
+
+            foreach ($p in $manifest.plugins) {
+                $pluginId = "$($p.name)@$mpName"
+                $plugins += [PSCustomObject]@{
+                    id          = $pluginId
+                    version     = $p.version
+                    description = $p.description
+                    installed   = [bool]$installedIds[$pluginId]
+                    enabled     = if ($enabledMap.ContainsKey($pluginId)) { [bool]$enabledMap[$pluginId] } else { $false }
+                }
+            }
+        } catch {}
+    }
+
+    return $plugins
+}
+
+function Show-InputDialog {
+    <#
+    .SYNOPSIS
+        Show a generic input dialog and return the user input, or $null on cancel.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Title,
+
+        [Parameter(Mandatory)]
+        [string]$Label,
+
+        [string]$DefaultValue = ''
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $Title
+    $form.ClientSize = New-Object System.Drawing.Size(400, 150)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Label
+    $lbl.Location = New-Object System.Drawing.Point(12, 15)
+    $lbl.AutoSize = $true
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Text = $DefaultValue
+    $txt.Location = New-Object System.Drawing.Point(12, 40)
+    $txt.Size = New-Object System.Drawing.Size(370, 24)
+
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Dock = "Bottom"
+    $panel.Height = 45
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Text = "OK"
+    $btnOk.Size = New-Object System.Drawing.Size(90, 30)
+    $btnOk.Location = New-Object System.Drawing.Point(210, 6)
+    $btnOk.DialogResult = "OK"
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = "Cancel"
+    $btnCancel.Size = New-Object System.Drawing.Size(90, 30)
+    $btnCancel.Location = New-Object System.Drawing.Point(305, 6)
+    $btnCancel.DialogResult = "Cancel"
+
+    $panel.Controls.AddRange(@($btnOk, $btnCancel))
+    $form.Controls.Add($panel)
+    $form.Controls.Add($lbl)
+    $form.Controls.Add($txt)
+    $form.AcceptButton = $btnOk
+    $form.CancelButton = $btnCancel
+
+    if ($form.ShowDialog() -ne "OK") { return }
+
+    $input = $txt.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($input)) { return }
+    return $input
+}
+
+function Show-PluginManagerDialog {
+    <#
+    .SYNOPSIS
+        Display the WinForms Plugin Marketplace Manager GUI.
+    #>
+    [CmdletBinding()]
+    [OutputType([void])]
+    param()
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Claude Plugin Manager"
+    $form.ClientSize = New-Object System.Drawing.Size(900, 600)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $tabControl = New-Object System.Windows.Forms.TabControl
+    $tabControl.Dock = "Fill"
+    $tabControl.Location = New-Object System.Drawing.Point(0, 0)
+
+    # ── Tab 1: Marketplaces ──
+
+    $tabMp = New-Object System.Windows.Forms.TabPage
+    $tabMp.Text = "Marketplaces"
+    $tabMp.UseVisualStyleBackColor = $true
+
+    $gridMp = New-Object System.Windows.Forms.DataGridView
+    $gridMp.Dock = "Fill"
+    $gridMp.AllowUserToAddRows = $false
+    $gridMp.AllowUserToDeleteRows = $false
+    $gridMp.MultiSelect = $false
+    $gridMp.SelectionMode = "FullRowSelect"
+    $gridMp.RowHeadersVisible = $false
+    $gridMp.BackgroundColor = [System.Drawing.Color]::White
+    $gridMp.BorderStyle = "None"
+    $gridMp.CellBorderStyle = "SingleHorizontal"
+    $gridMp.GridColor = [System.Drawing.Color]::LightGray
+    $gridMp.AutoGenerateColumns = $false
+    $gridMp.ReadOnly = $true
+
+    $colMpName = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colMpName.HeaderText = "Name"
+    $colMpName.Width = 120
+    $colMpName.DataPropertyName = "name"
+    $null = $gridMp.Columns.Add($colMpName)
+
+    $colMpSource = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colMpSource.HeaderText = "Source"
+    $colMpSource.Width = 80
+    $colMpSource.DataPropertyName = "source"
+    $null = $gridMp.Columns.Add($colMpSource)
+
+    $colMpRepo = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colMpRepo.HeaderText = "Repo"
+    $colMpRepo.Width = 250
+    $colMpRepo.DataPropertyName = "repo"
+    $null = $gridMp.Columns.Add($colMpRepo)
+
+    $colMpUpdated = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colMpUpdated.HeaderText = "Last Updated"
+    $colMpUpdated.AutoSizeMode = "Fill"
+    $colMpUpdated.DataPropertyName = "lastUpdated"
+    $null = $gridMp.Columns.Add($colMpUpdated)
+
+    $btnPanelMp = New-Object System.Windows.Forms.Panel
+    $btnPanelMp.Dock = "Bottom"
+    $btnPanelMp.Height = 45
+
+    $btnMpAdd = New-Object System.Windows.Forms.Button
+    $btnMpAdd.Text = "Add Marketplace"
+    $btnMpAdd.Size = New-Object System.Drawing.Size(140, 30)
+    $btnMpAdd.Location = New-Object System.Drawing.Point(10, 7)
+
+    $btnMpUpdateAll = New-Object System.Windows.Forms.Button
+    $btnMpUpdateAll.Text = "Update All"
+    $btnMpUpdateAll.Size = New-Object System.Drawing.Size(100, 30)
+    $btnMpUpdateAll.Location = New-Object System.Drawing.Point(160, 7)
+
+    $btnMpRemove = New-Object System.Windows.Forms.Button
+    $btnMpRemove.Text = "Remove Selected"
+    $btnMpRemove.Size = New-Object System.Drawing.Size(130, 30)
+    $btnMpRemove.Location = New-Object System.Drawing.Point(270, 7)
+
+    $btnPanelMp.Controls.AddRange(@($btnMpAdd, $btnMpUpdateAll, $btnMpRemove))
+    $tabMp.Controls.Add($gridMp)
+    $tabMp.Controls.Add($btnPanelMp)
+
+    # ── Tab 2: Plugins ──
+
+    $tabPl = New-Object System.Windows.Forms.TabPage
+    $tabPl.Text = "Plugins"
+    $tabPl.UseVisualStyleBackColor = $true
+
+    $gridPl = New-Object System.Windows.Forms.DataGridView
+    $gridPl.Dock = "Fill"
+    $gridPl.AllowUserToAddRows = $false
+    $gridPl.AllowUserToDeleteRows = $false
+    $gridPl.MultiSelect = $false
+    $gridPl.SelectionMode = "FullRowSelect"
+    $gridPl.RowHeadersVisible = $false
+    $gridPl.BackgroundColor = [System.Drawing.Color]::White
+    $gridPl.BorderStyle = "None"
+    $gridPl.CellBorderStyle = "SingleHorizontal"
+    $gridPl.GridColor = [System.Drawing.Color]::LightGray
+    $gridPl.AutoGenerateColumns = $false
+
+    $colPlId = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colPlId.HeaderText = "Plugin ID"
+    $colPlId.Width = 200
+    $colPlId.ReadOnly = $true
+    $colPlId.DataPropertyName = "id"
+    $null = $gridPl.Columns.Add($colPlId)
+
+    $colPlVer = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colPlVer.HeaderText = "Version"
+    $colPlVer.Width = 70
+    $colPlVer.ReadOnly = $true
+    $colPlVer.DataPropertyName = "version"
+    $null = $gridPl.Columns.Add($colPlVer)
+
+    $colPlInstalled = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+    $colPlInstalled.HeaderText = "Installed"
+    $colPlInstalled.Width = 70
+    $colPlInstalled.ReadOnly = $true
+    $colPlInstalled.DataPropertyName = "installed"
+    $null = $gridPl.Columns.Add($colPlInstalled)
+
+    $colPlEnabled = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+    $colPlEnabled.HeaderText = "Enabled"
+    $colPlEnabled.Width = 65
+    $colPlEnabled.ReadOnly = $true
+    $colPlEnabled.DataPropertyName = "enabled"
+    $null = $gridPl.Columns.Add($colPlEnabled)
+
+    $colPlDesc = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+    $colPlDesc.HeaderText = "Description"
+    $colPlDesc.AutoSizeMode = "Fill"
+    $colPlDesc.ReadOnly = $true
+    $colPlDesc.DataPropertyName = "description"
+    $null = $gridPl.Columns.Add($colPlDesc)
+
+    $btnPanelPl = New-Object System.Windows.Forms.Panel
+    $btnPanelPl.Dock = "Bottom"
+    $btnPanelPl.Height = 45
+
+    $btnPlInstall = New-Object System.Windows.Forms.Button
+    $btnPlInstall.Text = "Install"
+    $btnPlInstall.Size = New-Object System.Drawing.Size(90, 30)
+    $btnPlInstall.Location = New-Object System.Drawing.Point(10, 7)
+
+    $btnPlUninstall = New-Object System.Windows.Forms.Button
+    $btnPlUninstall.Text = "Uninstall"
+    $btnPlUninstall.Size = New-Object System.Drawing.Size(100, 30)
+    $btnPlUninstall.Location = New-Object System.Drawing.Point(110, 7)
+
+    $btnPlEnable = New-Object System.Windows.Forms.Button
+    $btnPlEnable.Text = "Enable"
+    $btnPlEnable.Size = New-Object System.Drawing.Size(80, 30)
+    $btnPlEnable.Location = New-Object System.Drawing.Point(220, 7)
+
+    $btnPlDisable = New-Object System.Windows.Forms.Button
+    $btnPlDisable.Text = "Disable"
+    $btnPlDisable.Size = New-Object System.Drawing.Size(80, 30)
+    $btnPlDisable.Location = New-Object System.Drawing.Point(310, 7)
+
+    $btnPanelPl.Controls.AddRange(@($btnPlInstall, $btnPlUninstall, $btnPlEnable, $btnPlDisable))
+    $tabPl.Controls.Add($gridPl)
+    $tabPl.Controls.Add($btnPanelPl)
+
+    $tabControl.TabPages.Add($tabMp)
+    $tabControl.TabPages.Add($tabPl)
+    $form.Controls.Add($tabControl)
+
+    # ── Status bar ──
+
+    $statusBar = New-Object System.Windows.Forms.StatusStrip
+    $statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
+    $statusLabel.Text = "Ready"
+    $null = $statusBar.Items.Add($statusLabel)
+    $form.Controls.Add($statusBar)
+
+    # ── Refresh helpers ──
+
+    function Refresh-Marketplaces {
+        $statusLabel.Text = "Loading marketplaces..."
+        $form.Refresh()
+
+        $mps = Get-MarketplaceList
+        $table = New-Object System.Data.DataTable
+        $null = $table.Columns.Add("name")
+        $null = $table.Columns.Add("source")
+        $null = $table.Columns.Add("repo")
+        $null = $table.Columns.Add("lastUpdated")
+
+        foreach ($mp in $mps) {
+            $manifestPath = Join-Path $mp.installLocation '.claude-plugin\marketplace.json'
+            $lastUpdated = ""
+            if (Test-Path $manifestPath) {
+                try {
+                    $fi = Get-Item $manifestPath
+                    $lastUpdated = $fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm")
+                } catch {}
+            }
+            $row = $table.NewRow()
+            $row["name"] = $mp.name
+            $row["source"] = $mp.source
+            $row["repo"] = $mp.repo
+            $row["lastUpdated"] = $lastUpdated
+            $table.Rows.Add($row) | Out-Null
+        }
+
+        $gridMp.DataSource = $table
+        $statusLabel.Text = "$($mps.Count) marketplace(s)"
+    }
+
+    function Refresh-Plugins {
+        $statusLabel.Text = "Loading plugins..."
+        $form.Refresh()
+
+        $plugins = Get-AvailablePlugins
+        $table = New-Object System.Data.DataTable
+        $null = $table.Columns.Add("id")
+        $null = $table.Columns.Add("version")
+        $null = $table.Columns.Add("installed", [bool])
+        $null = $table.Columns.Add("enabled", [bool])
+        $null = $table.Columns.Add("description")
+
+        foreach ($p in $plugins) {
+            $row = $table.NewRow()
+            $row["id"] = $p.id
+            $row["version"] = $p.version
+            $row["installed"] = [bool]$p.installed
+            $row["enabled"] = [bool]$p.enabled
+            $row["description"] = $p.description
+            $table.Rows.Add($row) | Out-Null
+        }
+
+        $gridPl.DataSource = $table
+        $instCount = ($plugins | Where-Object { $_.installed }).Count
+        $statusLabel.Text = "$instCount/$($plugins.Count) plugin(s) installed"
+    }
+
+    # ── Event handlers ──
+
+    $tabControl.add_SelectedIndexChanged({
+        if ($tabControl.SelectedIndex -eq 0) { Refresh-Marketplaces }
+        else { Refresh-Plugins }
+    })
+
+    $btnMpAdd.add_Click({
+        $repo = Show-InputDialog -Title "Add Marketplace" -Label "GitHub repo (e.g. owner/repo):" -DefaultValue "raystyle/Marketplaces"
+        if (-not $repo) { return }
+
+        $statusLabel.Text = "Adding marketplace $repo ..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin marketplace add $repo 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Marketplaces
+    })
+
+    $btnMpUpdateAll.add_Click({
+        $mps = Get-MarketplaceList
+        if ($mps.Count -eq 0) { return }
+
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        foreach ($mp in $mps) {
+            $statusLabel.Text = "Updating $($mp.name)..."
+            $form.Refresh()
+            & $claudeExe plugin marketplace update $mp.name 2>$null | Out-Null
+        }
+        $ErrorActionPreference = $prevEAP
+        Refresh-Marketplaces
+    })
+
+    $gridMp.add_CellDoubleClick({
+        param($sender, $e)
+        if ($e.RowIndex -lt 0) { return }
+        $name = $gridMp.Rows[$e.RowIndex].Cells[0].Value
+        if (-not $name) { return }
+
+        $statusLabel.Text = "Updating $name..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin marketplace update $name 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Marketplaces
+    })
+
+    $btnMpRemove.add_Click({
+        if ($gridMp.SelectedRows.Count -eq 0) { return }
+        $name = $gridMp.SelectedRows[0].Cells[0].Value
+        if (-not $name) { return }
+
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Remove marketplace '$name'?", "Confirm",
+            "OKCancel", "Warning")
+        if ($result -ne "OK") { return }
+
+        $statusLabel.Text = "Removing $name..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin marketplace remove $name 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Marketplaces
+    })
+
+    $gridPl.add_CellDoubleClick({
+        param($sender, $e)
+        if ($e.RowIndex -lt 0) { return }
+        $btnPlInstall.PerformClick()
+    })
+
+    $btnPlInstall.add_Click({
+        if ($gridPl.SelectedRows.Count -eq 0) { return }
+        $id = $gridPl.SelectedRows[0].Cells[0].Value
+        $installed = $gridPl.SelectedRows[0].Cells[2].Value
+        if (-not $id -or $installed) { return }
+
+        $statusLabel.Text = "Installing $id ..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin install $id 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Plugins
+    })
+
+    $btnPlUninstall.add_Click({
+        if ($gridPl.SelectedRows.Count -eq 0) { return }
+        $id = $gridPl.SelectedRows[0].Cells[0].Value
+        $installed = $gridPl.SelectedRows[0].Cells[2].Value
+        if (-not $id -or -not $installed) { return }
+
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Uninstall plugin '$id'?", "Confirm",
+            "OKCancel", "Warning")
+        if ($result -ne "OK") { return }
+
+        $statusLabel.Text = "Uninstalling $id ..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin uninstall $id 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Plugins
+    })
+
+    $btnPlEnable.add_Click({
+        if ($gridPl.SelectedRows.Count -eq 0) { return }
+        $id = $gridPl.SelectedRows[0].Cells[0].Value
+        $installed = $gridPl.SelectedRows[0].Cells[2].Value
+        if (-not $id -or -not $installed) { return }
+
+        $statusLabel.Text = "Enabling $id ..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin enable $id 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Plugins
+    })
+
+    $btnPlDisable.add_Click({
+        if ($gridPl.SelectedRows.Count -eq 0) { return }
+        $id = $gridPl.SelectedRows[0].Cells[0].Value
+        $installed = $gridPl.SelectedRows[0].Cells[2].Value
+        if (-not $id -or -not $installed) { return }
+
+        $statusLabel.Text = "Disabling $id ..."
+        $form.Refresh()
+        $claudeExe = Get-ClaudeCliPath
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin disable $id 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+        Refresh-Plugins
+    })
+
+    # ── Initial load ──
+
+    Refresh-Marketplaces
+    Refresh-Plugins
+    [void]$form.ShowDialog()
+}
+
+function Invoke-ClaudeHack {
+    <#
+    .SYNOPSIS
+        Open the Plugin Marketplace Manager GUI.
+    #>
+    [CmdletBinding()]
+    [OutputType([void])]
+    param()
+
+    $claudeExe = Get-ClaudeCliPath
+    if (-not $claudeExe) {
+        Write-Host "[ERROR] claude.exe not found — run 'omc install claude' first" -ForegroundColor Red
+        return
+    }
+
+    $builtInRepo = 'raystyle/Marketplaces'
+
+    Write-Host "[INFO] Checking marketplaces..." -ForegroundColor Cyan
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $output = & $claudeExe plugin marketplace list --json 2>$null | Out-String
+    $ErrorActionPreference = $prevEAP
+
+    $hasBuiltIn = $false
+    if ($output -match '"repo"\s*:\s*"raystyle/Marketplaces"') { $hasBuiltIn = $true }
+
+    if (-not $hasBuiltIn) {
+        Write-Host "[INFO] Adding built-in marketplace $builtInRepo ..." -ForegroundColor Cyan
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin marketplace add $builtInRepo 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+    }
+
+    Write-Host "[INFO] Updating marketplaces..." -ForegroundColor Cyan
+    $ErrorActionPreference = 'Continue'
+    $output = & $claudeExe plugin marketplace list --json 2>$null | Out-String
+    $ErrorActionPreference = $prevEAP
+
+    if ($output -match '"name"\s*:\s*"([^"]+)"') {
+        $mpName = $Matches[1]
+        $ErrorActionPreference = 'Continue'
+        & $claudeExe plugin marketplace update $mpName 2>$null | Out-Null
+        $ErrorActionPreference = $prevEAP
+    }
+
+    Write-Host "[OK] Opening Plugin Manager..." -ForegroundColor Green
+
+    Show-PluginManagerDialog
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
 # dispatch
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1170,4 +1858,5 @@ switch ($Command) {
     "update"    { Invoke-ClaudeUpdate }
     "uninstall" { Invoke-ClaudeUninstall }
     "setup"     { Invoke-ClaudeConfig -Scope "setup" -Force:$Force }
+    "hack"      { Invoke-ClaudeHack }
 }

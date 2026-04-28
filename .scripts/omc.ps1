@@ -81,6 +81,7 @@ $BaseTools = @(
     'gh'
     '7z'
     'git'
+    'aria2'
 )
 
 $ToolDefs = @(
@@ -88,10 +89,10 @@ $ToolDefs = @(
     'jq'
     'yq'
     'fzf'
-    'markdown-oxide'
     'mq'
     'just'
     'starship'
+    'rumdl'
 )
 
 $ToolScripts = @(
@@ -101,6 +102,7 @@ $ToolScripts = @(
 $Tools = $ToolDefs + $ToolScripts
 
 $DevTools = @{
+    dotnet      = 'dotnet.ps1'
     node        = 'node.ps1'
     rust        = 'rust.ps1'
     font        = 'font.ps1'
@@ -493,7 +495,7 @@ function Invoke-Batch {
     if ($Cmd -ne 'uninstall') {
         Write-Host ''
         # Explicit order: gh -> git -> uv -> claude -> 7z
-        $baseInstallOrder = @('gh', 'git') + $BaseScripts + @('7z')
+        $baseInstallOrder = @('gh', 'git') + $BaseScripts + @('7z', 'aria2')
         foreach ($tool in $baseInstallOrder) {
             if ($BaseTools -contains $tool) {
                 try {
@@ -556,7 +558,7 @@ function Invoke-Batch {
 
     # Dev tools + PS modules
     Write-Host ''
-    foreach ($entry in $DevTools.GetEnumerator() | Sort-Object { @('node','rust','font','pwsh','pses','vsbuild','jupyter').IndexOf($_.Key) }) {
+    foreach ($entry in $DevTools.GetEnumerator() | Sort-Object { @('dotnet','node','rust','font','pwsh','pses','vsbuild','jupyter').IndexOf($_.Key) }) {
         $path = Join-Path $DevDir $entry.Value
         try {
             switch ($Cmd) {
@@ -640,7 +642,7 @@ $tool  = if ($args.Count -gt 1) { $args[1] } else { '' }
 $extra = if ($args.Count -gt 2) { $args[2..($args.Count - 1)] -join ' ' } else { '' }
 
 $AllToolNames = @($BaseScripts) + @($BaseTools) + @($Tools) + @($DevTools.Keys) + @($PsModules.Keys) + @('base', 'tool', 'dev')
-$KnownCmds = @('init', 'help', 'check', 'install', 'update', 'uninstall', 'download', 'lock', 'setup', 'sync')
+$KnownCmds = @('init', 'help', 'check', 'install', 'update', 'uninstall', 'download', 'lock', 'setup', 'sync', 'hack')
 
 $GroupNames = @('base', 'tool', 'dev')
 
@@ -767,7 +769,7 @@ if ($GroupNames -contains $tool) {
         }
     }
     elseif ($tool -eq 'dev') {
-        foreach ($entry in $DevTools.GetEnumerator() | Sort-Object { @('node','rust','font','pwsh','pses','vsbuild','jupyter').IndexOf($_.Key) }) {
+        foreach ($entry in $DevTools.GetEnumerator() | Sort-Object { @('dotnet','node','rust','font','pwsh','pses','vsbuild','jupyter').IndexOf($_.Key) }) {
             $path = Join-Path $DevDir $entry.Value
             try {
                 switch ($cmd) {
@@ -807,6 +809,7 @@ if ($BaseScripts -contains $tool) {
             'update'    { & $scriptPath update }
             'uninstall' { & $scriptPath uninstall }
             'setup'     { & $scriptPath setup }
+            'hack'      { & $scriptPath hack }
             default     { Write-Host "[ERROR] Unknown command '$cmd' for $tool" -ForegroundColor Red; exit 1 }
         }
     } else {
