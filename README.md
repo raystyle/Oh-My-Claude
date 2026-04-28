@@ -36,6 +36,7 @@ omc uninstall [工具|分组]   # 卸载工具（保留锁定和缓存）
 omc download <工具> <版本>  # 下载指定版本到缓存（不安装）
 omc lock <工具> [版本]      # 查看/锁定版本
 omc setup claude           # 配置 Claude Code（GUI 编辑器）
+omc hack claude            # 插件市场管理器（GUI）
 omc help                   # 显示用法
 ```
 
@@ -50,7 +51,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | 工具 | 说明 |
 |------|------|
 | uv | Python 包管理器和 Python 版本管理 |
-| claude | Claude Code CLI（通过 uv 安装，`omc setup claude` 配置） |
+| claude | Claude Code CLI（通过 uv 安装，`omc setup claude` 配置，`omc hack claude` 插件市场） |
 
 ### 基础工具（Base Tools）
 
