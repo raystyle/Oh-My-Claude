@@ -61,6 +61,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | 7z | 7-Zip 压缩工具 |
 | git | Git for Windows（便携版） |
 | gh | GitHub CLI |
+| aria2 | 多线程下载工具 |
 
 ### 工具（Tools）
 
@@ -75,7 +76,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | just | 任务运行器 |
 | starship | 跨 Shell 提示符 |
 | mq | 基于 mq lang 的 Markdown 命令行操作工具（主程序 + mq-lsp + mq-check） |
-| markdown-oxide | Markdown 编辑器 LSP |
+| rumdl | Markdown lint/format 工具 |
 | duckdb | DuckDB CLI（独立脚本） |
 
 ### 开发工具（Dev Tools）
@@ -85,6 +86,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | 工具 | 说明 |
 |------|------|
 | node | Node.js（USTC 镜像） |
+| dotnet | .NET SDK（aria2c 多线程下载，默认 LTS） |
 | rust | Rust（rustup，rsproxy.cn 镜像） |
 | font | Nerd Font 安装器（0xProto） |
 | pwsh | PowerShell 7（GitHub Releases） |
