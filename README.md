@@ -74,7 +74,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | fzf | 模糊查找器 |
 | just | 任务运行器 |
 | starship | 跨 Shell 提示符 |
-| mq | 多功能工具（主程序 + mq-lsp + mq-check） |
+| mq | 基于 mq lang 的 Markdown 命令行操作工具（主程序 + mq-lsp + mq-check） |
 | markdown-oxide | Markdown 编辑器 LSP |
 | duckdb | DuckDB CLI（独立脚本） |
 

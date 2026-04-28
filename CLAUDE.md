@@ -164,7 +164,7 @@ return @{
 - **fzf** — 模糊查找器
 - **just** — 任务运行器
 - **starship** — 跨 Shell 提示符（含 `PostInstall` 写入 profile）
-- **mq** — 多功能工具（主程序 + mq-lsp + mq-check，通过 `ExtraFiles`）
+- **mq** — 基于 mq lang 的 Markdown 命令行操作工具（主程序 + mq-lsp + mq-check，通过 `ExtraFiles`）
 - **markdown-oxide** — Markdown 编辑器
 
 ### 工具脚本（`$ToolScripts`）— `.scripts/tools/*.ps1`
