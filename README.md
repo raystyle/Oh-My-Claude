@@ -78,6 +78,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | starship | 跨 Shell 提示符 |
 | mq | 基于 mq lang 的 Markdown 命令行操作工具（主程序 + mq-lsp + mq-check） |
 | rumdl | Markdown lint/format 工具 |
+| nushell | Nushell fork（nushell-evo），含 MCP 日志和 browse 插件 |
 | duckdb | DuckDB CLI（独立脚本） |
 
 ### 开发工具（Dev Tools）

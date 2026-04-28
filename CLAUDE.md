@@ -56,7 +56,7 @@ $BaseTools = @('7z', 'git', 'gh', 'aria2')    # 数据驱动，.envs\base\bin
 
 $ToolDefs = @(                               # 数据驱动，.envs\tools\bin
     'ripgrep', 'jq', 'yq', 'fzf',
-    'mq', 'just', 'starship', 'rumdl'
+    'mq', 'just', 'starship', 'rumdl', 'nushell'
 )
 
 $ToolScripts = @('duckdb')                  # 独立脚本
@@ -168,6 +168,7 @@ return @{
 - **starship** — 跨 Shell 提示符（含 `PostInstall` 写入 profile）
 - **mq** — 基于 mq lang 的 Markdown 命令行操作工具（主程序 + mq-lsp + mq-check，通过 `ExtraFiles`）
 - **rumdl** — Markdown lint/format 工具
+- **nushell** — Nushell fork（nushell-evo），含 MCP 日志和 browse 插件（`KeepFiles` 提取 `nu_plugin_*.exe`，`PostInstall` 注册插件，`PreUninstall` 清理插件）
 
 ### 工具脚本（`$ToolScripts`）— `.scripts/tools/*.ps1`
 

@@ -93,6 +93,7 @@ $ToolDefs = @(
     'just'
     'starship'
     'rumdl'
+    'nushell'
 )
 
 $ToolScripts = @(
