@@ -197,6 +197,22 @@ function Get-PSModuleVersionInstalled {
     $latest.Name
 }
 
+function Set-ProfileBlock {
+    <#
+    .SYNOPSIS
+        Write the profile block for a module if not already present.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$ModuleDef
+    )
+
+    $pb = $ModuleDef.ProfileBlock
+    $profileScript = Join-Path $PSScriptRoot 'profile-line.ps1'
+    & $profileScript -Action add -Line $pb.Lines -Comment $pb.Comment -BlockName $pb.BlockName
+}
+
 function Get-PSModulePaths {
     <#
     .SYNOPSIS
@@ -413,7 +429,7 @@ function Invoke-PSModuleInstall {
     $dn = $ModuleDef.DisplayName
     $paths = Get-PSModulePaths -ModuleName $ModuleName
 
-    # ── 0. Install command: skip if all paths already installed ──
+    # ── 0. Install command: skip install if all paths already installed ──
     if ($Command -eq 'install' -and -not $Force) {
         $allGood = $true
         foreach ($p in $paths) {
@@ -433,6 +449,7 @@ function Invoke-PSModuleInstall {
                 Set-PSModuleLock -ModuleName $ModuleName -Version $ver
                 Show-LockWrite -Version $ver
             }
+            if ($ModuleDef.ProfileBlock) { Set-ProfileBlock -ModuleDef $ModuleDef }
             return
         }
     }
@@ -471,6 +488,7 @@ function Invoke-PSModuleInstall {
                 Set-PSModuleLock -ModuleName $ModuleName -Version $currentVer
                 Show-LockWrite -Version $currentVer
             }
+            if ($ModuleDef.ProfileBlock) { Set-ProfileBlock -ModuleDef $ModuleDef }
             return
         }
         Write-Host "[UPGRADE] $dn $currentVer -> $Version" -ForegroundColor Cyan
@@ -563,12 +581,7 @@ function Invoke-PSModuleInstall {
     Show-LockWrite -Version $Version
 
     # ── 8. Configure profile ──
-    if ($ModuleDef.ProfileBlock) {
-        $pb = $ModuleDef.ProfileBlock
-        $profileScript = Join-Path $PSScriptRoot 'profile-line.ps1'
-        Write-Host '[INFO] Configuring profile...' -ForegroundColor Cyan
-        & $profileScript -Action add -Line $pb.Lines -Comment $pb.Comment -BlockName $pb.BlockName
-    }
+    if ($ModuleDef.ProfileBlock) { Set-ProfileBlock -ModuleDef $ModuleDef }
 
     Write-Host ''
     Show-InstallComplete -Tool $dn -Version $Version

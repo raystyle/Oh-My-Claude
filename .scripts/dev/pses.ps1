@@ -150,6 +150,7 @@ function Add-PsesModulePath {
     <#
     .SYNOPSIS
         Idempotently add the PSES module parent dir to user PSModulePath.
+        Ensures Documents module paths are preserved for PS5/PS7 compatibility.
     #>
     [CmdletBinding()]
     [OutputType([void])]
@@ -167,8 +168,25 @@ function Add-PsesModulePath {
 
     if ($entries -contains $normalizedDir) { return }
 
-    $separator = if ($currentPath -and -not $currentPath.EndsWith(';')) { ';' } else { '' }
-    $newPath = "$currentPath$separator$normalizedDir"
+    # Ensure Documents module paths are present when user-level is first set,
+    # otherwise PS5 loses its default module search path.
+    $myDocs = [Environment]::GetFolderPath('MyDocuments')
+    $requiredDirs = @(
+        "$myDocs\WindowsPowerShell\Modules"
+        "$myDocs\PowerShell\Modules"
+        $normalizedDir
+    )
+
+    $pathSet = New-Object System.Collections.Generic.HashSet[string]
+    $merged = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in $requiredDirs) {
+        if ($pathSet.Add($dir)) { $merged.Add($dir) }
+    }
+    foreach ($dir in $entries) {
+        if ($pathSet.Add($dir)) { $merged.Add($dir) }
+    }
+
+    $newPath = $merged -join ';'
     [Environment]::SetEnvironmentVariable("PSModulePath", $newPath, "User")
     $env:PSModulePath = "$env:PSModulePath;$normalizedDir"
     Write-Host "[OK] Added $normalizedDir to user PSModulePath" -ForegroundColor Green

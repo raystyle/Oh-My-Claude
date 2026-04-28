@@ -12,7 +12,7 @@ return @{
     GetInstallDir    = { param($r) "$r\.envs\base\git" }
     VersionCommand   = '--version'
     VersionPattern   = 'git version\s+(.+)'
-    AssetNamePattern = 'PortableGit.*64-bit.*\.7z\.exe$'
+    GetArchiveName  = { param($v) $base = ($v -split '\.')[0..2] -join '.'; "PortableGit-$base-64-bit.7z.exe" }
     PostInstall      = {
         param($ToolDef, $Version, $RootDir)
         $installDir = & $ToolDef.GetInstallDir $RootDir
@@ -30,19 +30,63 @@ return @{
         # PATH
         Add-UserPath -Dir $binDir
         $env:PATH = "$binDir;$env:PATH"
-        # .bashrc
+        # .bashrc — idempotent with BEGIN/END markers
         $bashrcPath = "$env:USERPROFILE\.bashrc"
-        $bashrcLines = @(
-            "# Chinese environment for Git Bash"
-            "export PYTHONIOENCODING=utf-8"
-            "export LANG=zh_CN.UTF-8"
-            "export LC_ALL=zh_CN.UTF-8"
+        $baseBin   = "$RootDir\.envs\base\bin"
+        $toolsBin  = "$RootDir\.envs\tools\bin"
+        $pathLine  = 'export PATH="' + $baseBin + ':' + $toolsBin + '":$PATH'
+        $beginMarker = '# BEGIN ohmywinclaude: git'
+        $endMarker   = '# END ohmywinclaude: git'
+        $newBlock = @(
+            $beginMarker
+            $pathLine
+            '# Chinese environment for Git Bash'
+            'export PYTHONIOENCODING=utf-8'
+            'export LANG=zh_CN.UTF-8'
+            'export LC_ALL=zh_CN.UTF-8'
+            $endMarker
         )
-        $existing = if (Test-Path $bashrcPath) { Get-Content $bashrcPath -Raw } else { "" }
-        if ($existing -notmatch 'PYTHONIOENCODING=utf-8') {
-            Add-Content -Path $bashrcPath -Value ("`n" + ($bashrcLines -join "`n")) -Encoding UTF8
-            Write-Host "[OK] .bashrc configured (Chinese env)" -ForegroundColor Green
+        $noBom = New-Object System.Text.UTF8Encoding $false
+        if (Test-Path $bashrcPath) {
+            $raw = [System.IO.File]::ReadAllText($bashrcPath, $noBom)
+        } else {
+            $raw = ''
         }
+        # Remove old block (if any) and legacy Chinese env block
+        $lines = $raw -split "`n"
+        $cleaned = @()
+        $inBlock = $false
+        $skipLegacy = $false
+        foreach ($line in $lines) {
+            if (-not $inBlock -and $line.Trim() -eq $beginMarker) {
+                $inBlock = $true; continue
+            }
+            if ($inBlock) {
+                if ($line.Trim() -eq $endMarker) { $inBlock = $false }
+                continue
+            }
+            if ($line.Trim() -eq '# Chinese environment for Git Bash') {
+                $skipLegacy = $true; continue
+            }
+            if ($skipLegacy -and $line.Trim() -match '^export (PYTHONIOENCODING|LANG|LC_ALL)=') {
+                continue
+            }
+            if ($line.Trim() -eq '# omc binary paths') {
+                $skipLegacy = $true; continue
+            }
+            if ($skipLegacy -and $line.Trim() -match '^export PATH=') {
+                continue
+            }
+            $skipLegacy = $false
+            $cleaned += $line
+        }
+        # Append new block
+        if ($cleaned.Count -gt 0 -and $cleaned[-1].Trim() -ne '') {
+            $cleaned += ''
+        }
+        $cleaned += $newBlock
+        [System.IO.File]::WriteAllLines($bashrcPath, [string[]]$cleaned, $noBom)
+        Write-Host "[OK] .bashrc configured (PATH + Chinese env)" -ForegroundColor Green
     }
     PreUninstall    = {
         param($ToolDef, $RootDir)
@@ -68,5 +112,31 @@ return @{
         }
         # PATH
         Remove-UserPath -Dir $binDir
+        # .bashrc — remove omc block
+        $bashrcPath = "$env:USERPROFILE\.bashrc"
+        if (-not (Test-Path $bashrcPath)) { return }
+        $noBom = New-Object System.Text.UTF8Encoding $false
+        $raw = [System.IO.File]::ReadAllText($bashrcPath, $noBom)
+        $beginMarker = '# BEGIN ohmywinclaude: git'
+        $endMarker   = '# END ohmywinclaude: git'
+        $lines = $raw -split "`n"
+        $cleaned = @()
+        $inBlock = $false
+        foreach ($line in $lines) {
+            if (-not $inBlock -and $line.Trim() -eq $beginMarker) {
+                $inBlock = $true; continue
+            }
+            if ($inBlock) {
+                if ($line.Trim() -eq $endMarker) { $inBlock = $false }
+                continue
+            }
+            $cleaned += $line
+        }
+        # Remove trailing blank lines
+        while ($cleaned.Count -gt 0 -and $cleaned[-1].Trim() -eq '') {
+            $cleaned = $cleaned[0..($cleaned.Count - 2)]
+        }
+        [System.IO.File]::WriteAllLines($bashrcPath, [string[]]$cleaned, $noBom)
+        Write-Host "[OK] .bashrc block removed" -ForegroundColor Green
     }
 }

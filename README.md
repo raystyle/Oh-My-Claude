@@ -88,6 +88,7 @@ omc 依赖的引导级工具，独立脚本，通过 dot-source 调度。
 | rust | Rust（rustup，rsproxy.cn 镜像） |
 | font | Nerd Font 安装器（0xProto） |
 | pwsh | PowerShell 7（GitHub Releases） |
+| pses | PowerShellEditorServices（GitHub Releases） |
 | jupyter | Jupyter（通过 `uv tool install`） |
 | vsbuild | VS Build Tools（离线布局） |
 
@@ -117,7 +118,7 @@ ohmyclaude/
 │   ├── core.ps1             # 数据驱动工具的生命周期引擎
 │   ├── base/                # 基础脚本（uv.ps1, claude.ps1）+ 基础工具定义
 │   ├── tools/               # 数据驱动工具定义（$ToolDefs）+ 独立脚本
-│   └── dev/                 # 开发工具安装器 + PS 模块管理
+│   └── dev/                 # 开发工具安装器 + PS 模块管理（profile-line.ps1, psmodule.ps1）
 ├── tests/
 │   ├── tests.psd1           # Pester 配置
 │   ├── Helpers/             # 共享测试基础设施

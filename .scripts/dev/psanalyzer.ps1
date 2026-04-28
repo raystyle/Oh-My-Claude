@@ -43,8 +43,10 @@ $ModuleDefs = @{
             BlockName = 'PSFzf'
             Comment = 'replace ''Ctrl+t'' and ''Ctrl+r'' with your preferred bindings:'
             Lines = @(
-                'Import-Module PSFzf'
-                'Set-PsFzfOption -PSReadlineChordProvider ''Ctrl+t'' -PSReadlineChordReverseHistory ''Ctrl+r'''
+                'if (Get-Module PSFzf -ListAvailable -ErrorAction SilentlyContinue) {'
+                '    Import-Module PSFzf'
+                '    Set-PsFzfOption -PSReadlineChordProvider ''Ctrl+t'' -PSReadlineChordReverseHistory ''Ctrl+r'''
+                '}'
             )
         }
     }

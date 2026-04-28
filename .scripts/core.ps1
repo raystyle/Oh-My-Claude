@@ -738,6 +738,9 @@ function Invoke-ToolInstall {
             Show-AlreadyInstalled -Tool $ToolDef.DisplayName -Version $installed -Location $exePath
 
             if (-not $lockVer) { Set-ToolConfig -ToolDef $ToolDef -Lock $installed }
+            if ($ToolDef.PostInstall) {
+                & $ToolDef.PostInstall -ToolDef $ToolDef -Version $installed -RootDir $global:Tool_RootDir
+            }
             return
         }
         if ($installed) { Write-Host "[INFO] ${dn}: upgrading $installed -> $Version" -ForegroundColor Cyan }
