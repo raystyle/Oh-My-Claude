@@ -1811,7 +1811,10 @@ function Invoke-ClaudeHack {
         return
     }
 
-    $builtInRepo = 'raystyle/Marketplaces'
+    $baseBin = Join-Path $script:OhmyRoot '.envs\base\bin'
+    if ($env:Path -notlike "*$baseBin*") { $env:Path = "$baseBin;$env:Path" }
+
+    $BuiltInMarketplaces = @('raystyle/Marketplaces', 'jarrodwatts/claude-hud')
 
     Write-Host "[INFO] Checking marketplaces..." -ForegroundColor Cyan
 
@@ -1820,23 +1823,27 @@ function Invoke-ClaudeHack {
     $output = & $claudeExe plugin marketplace list --json 2>$null | Out-String
     $ErrorActionPreference = $prevEAP
 
-    $hasBuiltIn = $false
-    if ($output -match '"repo"\s*:\s*"raystyle/Marketplaces"') { $hasBuiltIn = $true }
+    foreach ($repo in $BuiltInMarketplaces) {
+        $escaped = [regex]::Escape($repo)
+        if ($output -match "`"repo`"\s*:\s*`"$escaped`"") { continue }
 
-    if (-not $hasBuiltIn) {
-        Write-Host "[INFO] Adding built-in marketplace $builtInRepo ..." -ForegroundColor Cyan
+        Write-Host "[INFO] Adding built-in marketplace $repo ..." -ForegroundColor Cyan
+        $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & $claudeExe plugin marketplace add $builtInRepo 2>$null | Out-Null
+        & $claudeExe plugin marketplace add $repo 2>$null | Out-Null
         $ErrorActionPreference = $prevEAP
     }
 
     Write-Host "[INFO] Updating marketplaces..." -ForegroundColor Cyan
+    $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $output = & $claudeExe plugin marketplace list --json 2>$null | Out-String
     $ErrorActionPreference = $prevEAP
 
-    if ($output -match '"name"\s*:\s*"([^"]+)"') {
-        $mpName = $Matches[1]
+    $mpNames = [regex]::Matches($output, '"name"\s*:\s*"([^"]+)"') |
+        ForEach-Object { $_.Groups[1].Value }
+    foreach ($mpName in $mpNames) {
+        $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         & $claudeExe plugin marketplace update $mpName 2>$null | Out-Null
         $ErrorActionPreference = $prevEAP
